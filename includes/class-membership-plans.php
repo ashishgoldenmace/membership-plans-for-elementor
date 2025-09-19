@@ -33,8 +33,10 @@ class MembershipPlans {
             'has_archive' => true,
             'show_in_rest' => true,
             'supports' => array('title', 'editor', 'custom-fields'),
+            'taxonomies' => array('category'), // ✅ category taxonomy added
         ));
     }
+    
     
     public function sync_single_plan($level_id) {
         if (!function_exists('pmpro_getLevel')) return;
@@ -49,6 +51,9 @@ class MembershipPlans {
         } else {
             $this->create_plan($level);
         }
+        
+        // Create categories and posts for this level's groups
+        $this->create_categories_for_level($level_id);
     }
     
     public function delete_plan($level_id) {
@@ -56,6 +61,9 @@ class MembershipPlans {
         if ($existing_post) {
             wp_delete_post($existing_post->ID, true);
         }
+        
+        // Clean up categories and posts for this level's groups
+        $this->cleanup_categories_for_level($level_id);
     }
     
     public function maybe_sync_plans() {
@@ -153,5 +161,73 @@ class MembershipPlans {
         $checkout_url = home_url('/checkout/');
         return add_query_arg('level', $level_id, $checkout_url);
     }
+ 
+    private function get_groups_by_level_id($level_id) {
+        global $wpdb;
+    
+        // दोनों tables
+        $table_groups = $wpdb->prefix . 'pmpro_groups';
+        $table_levels_groups = $wpdb->prefix . 'pmpro_membership_levels_groups';
+    
+        // Query बनाना
+        $results = $wpdb->get_results(
+            $wpdb->prepare("
+                SELECT g.id as group_id, g.name as group_name
+                FROM $table_levels_groups lg
+                INNER JOIN $table_groups g ON lg.group = g.id
+                WHERE lg.level = %d
+            ", $level_id)
+        );
+    
+        return $results;
+    }
+    
+    /**
+     * Create categories based on group names from PMPro level
+     */
+    private function create_categories_for_level($level_id) {
+        $groups = $this->get_groups_by_level_id($level_id);
+        
+        if (empty($groups)) {
+            return;
+        }
+    
+        // पहले plan post निकालो
+        $plan_post = $this->get_plan_by_pmpro_id($level_id);
+        if (!$plan_post) return;
+    
+        $term_ids = array();
+    
+        foreach ($groups as $group) {
+            $category_name = sanitize_text_field($group->group_name);
+            $category_slug = sanitize_title($group->group_name);
+    
+            // Check if category already exists
+            $existing_category = get_term_by('slug', $category_slug, 'category');
+    
+            if (!$existing_category) {
+                $category_data = wp_insert_term(
+                    $category_name,
+                    'category',
+                    array(
+                        'slug' => $category_slug,
+                        'description' => 'Category for ' . $category_name . ' membership group'
+                    )
+                );
+    
+                if (!is_wp_error($category_data)) {
+                    $term_ids[] = $category_data['term_id'];
+                }
+            } else {
+                $term_ids[] = $existing_category->term_id;
+            }
+        }
+    
+        // ✅ Plan post पर categories assign करना
+        if (!empty($term_ids)) {
+            wp_set_post_terms($plan_post->ID, $term_ids, 'category');
+        }
+    }
+    
     
 }
