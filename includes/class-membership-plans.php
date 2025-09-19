@@ -33,7 +33,7 @@ class MembershipPlans {
             'has_archive' => true,
             'show_in_rest' => true,
             'supports' => array('title', 'editor', 'custom-fields'),
-            'taxonomies' => array('category'), // ✅ category taxonomy added
+            'taxonomies' => array('category'),
         ));
     }
     
@@ -61,9 +61,6 @@ class MembershipPlans {
         if ($existing_post) {
             wp_delete_post($existing_post->ID, true);
         }
-        
-        // Clean up categories and posts for this level's groups
-        $this->cleanup_categories_for_level($level_id);
     }
     
     public function maybe_sync_plans() {
@@ -188,11 +185,16 @@ class MembershipPlans {
     private function create_categories_for_level($level_id) {
         $groups = $this->get_groups_by_level_id($level_id);
         
+        // अगर कोई group नहीं है → post से categories हटाओ
         if (empty($groups)) {
+            $plan_post = $this->get_plan_by_pmpro_id($level_id);
+            if ($plan_post) {
+                wp_set_post_terms($plan_post->ID, array(), 'category');
+            }
             return;
         }
     
-        // पहले plan post निकालो
+        // Plan post निकालो
         $plan_post = $this->get_plan_by_pmpro_id($level_id);
         if (!$plan_post) return;
     
@@ -223,10 +225,8 @@ class MembershipPlans {
             }
         }
     
-        // ✅ Plan post पर categories assign करना
-        if (!empty($term_ids)) {
-            wp_set_post_terms($plan_post->ID, $term_ids, 'category');
-        }
+        // ✅ अब सिर्फ current groups की categories assign होंगी
+        wp_set_post_terms($plan_post->ID, $term_ids, 'category');
     }
     
     
