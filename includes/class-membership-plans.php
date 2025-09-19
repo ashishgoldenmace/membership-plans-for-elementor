@@ -32,6 +32,8 @@ class MembershipPlans {
             'public' => true,
             'has_archive' => true,
             'show_in_rest' => true,
+            'show_in_menu' => false, // Hide from admin menu
+            'show_ui' => false, // Hide UI completely
             'supports' => array('title', 'editor', 'custom-fields'),
             'taxonomies' => array('category'),
         ));
