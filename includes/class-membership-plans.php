@@ -12,7 +12,7 @@ class MembershipPlans {
         add_action('pmpro_delete_membership_level', array($this, 'delete_plan'));
         
         // // Manual sync on admin init (optional)
-        // add_action('admin_init', array($this, 'sync_all_plans'));
+        // add_action('admin_init', array($this, 'sync_all_plans'));    
     }
     
     public function register_cpt() {
@@ -60,7 +60,7 @@ class MembershipPlans {
         }
     }
     
-    private function sync_all_plans() {
+    public function sync_all_plans() {
         if (!function_exists('pmpro_getAllLevels')) return;
         
         $levels = pmpro_getAllLevels(true, true);
@@ -103,12 +103,12 @@ class MembershipPlans {
             $checkout_link = $this->generate_checkout_link($level->id);
             update_field('checkout_link', $checkout_link, $post_id);
             
-            // Add plan image from PMPro field
+            // Add plan image as featured image from PMPro field
             $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
             if ($plan_image_url) {
                 $attachment_id = attachment_url_to_postid($plan_image_url);
                 if ($attachment_id) {
-                    update_field('plan_image', $attachment_id, $post_id);
+                    set_post_thumbnail($post_id, $attachment_id);
                 }
             }
             
@@ -133,12 +133,12 @@ class MembershipPlans {
             update_field('checkout_link', $checkout_link, $post_id);
         }
         
-        // Update plan image from PMPro field
+        // Update plan image as featured image from PMPro field
         $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
         if ($plan_image_url) {
             $attachment_id = attachment_url_to_postid($plan_image_url);
             if ($attachment_id) {
-                update_field('plan_image', $attachment_id, $post_id);
+                set_post_thumbnail($post_id, $attachment_id);
             }
         }
         
