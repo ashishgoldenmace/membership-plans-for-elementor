@@ -12,7 +12,7 @@ class MembershipPlans {
         add_action('pmpro_delete_membership_level', array($this, 'delete_plan'));
         
         // // Manual sync on admin init (optional)
-        // add_action('admin_init', array($this, 'maybe_sync_plans'));
+        // add_action('admin_init', array($this, 'sync_all_plans'));
     }
     
     public function register_cpt() {
@@ -51,22 +51,12 @@ class MembershipPlans {
         } else {
             $this->create_plan($level);
         }
-        
-        // Create categories and posts for this level's groups
-        $this->create_categories_for_level($level_id);
     }
     
     public function delete_plan($level_id) {
         $existing_post = $this->get_plan_by_pmpro_id($level_id);
         if ($existing_post) {
             wp_delete_post($existing_post->ID, true);
-        }
-    }
-    
-    public function maybe_sync_plans() {
-        // Only run if user clicks sync button or first time activation
-        if (isset($_GET['sync_plans']) && current_user_can('manage_options')) {
-            $this->sync_all_plans();
         }
     }
     
@@ -121,6 +111,9 @@ class MembershipPlans {
                     update_field('plan_image', $attachment_id, $post_id);
                 }
             }
+            
+            // Create categories and assign them to the plan post
+            $this->create_categories_for_level($level->id);
         }
     }
     
@@ -148,6 +141,9 @@ class MembershipPlans {
                 update_field('plan_image', $attachment_id, $post_id);
             }
         }
+        
+        // Create/update categories and assign them to the plan post
+        $this->create_categories_for_level($level->id);
     }
     
     private function generate_checkout_link($level_id) {
