@@ -6,7 +6,13 @@ class MembershipPlans {
     
     public function __construct() {
         add_action('init', array($this, 'register_cpt'));
-        add_action('init', array($this, 'sync_pmpro_plans'));
+        
+        // Only sync when PMPro levels are created, updated, or deleted
+        add_action('pmpro_save_membership_level', array($this, 'sync_single_plan'));
+        add_action('pmpro_delete_membership_level', array($this, 'delete_plan'));
+        
+        // // Manual sync on admin init (optional)
+        // add_action('admin_init', array($this, 'maybe_sync_plans'));
     }
     
     public function register_cpt() {
@@ -30,7 +36,36 @@ class MembershipPlans {
         ));
     }
     
-    public function sync_pmpro_plans() {
+    public function sync_single_plan($level_id) {
+        if (!function_exists('pmpro_getLevel')) return;
+        
+        $level = pmpro_getLevel($level_id);
+        if (!$level) return;
+        
+        $existing_post = $this->get_plan_by_pmpro_id($level_id);
+        
+        if ($existing_post) {
+            $this->update_plan($existing_post->ID, $level);
+        } else {
+            $this->create_plan($level);
+        }
+    }
+    
+    public function delete_plan($level_id) {
+        $existing_post = $this->get_plan_by_pmpro_id($level_id);
+        if ($existing_post) {
+            wp_delete_post($existing_post->ID, true);
+        }
+    }
+    
+    public function maybe_sync_plans() {
+        // Only run if user clicks sync button or first time activation
+        if (isset($_GET['sync_plans']) && current_user_can('manage_options')) {
+            $this->sync_all_plans();
+        }
+    }
+    
+    private function sync_all_plans() {
         if (!function_exists('pmpro_getAllLevels')) return;
         
         $levels = pmpro_getAllLevels(true, true);
