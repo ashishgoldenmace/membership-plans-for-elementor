@@ -72,6 +72,15 @@ class MembershipPlans {
             update_field('plan_price', $price, $post_id);
             $checkout_link = $this->generate_checkout_link($level->id);
             update_field('checkout_link', $checkout_link, $post_id);
+            
+            // Add plan image from PMPro field
+            $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
+            if ($plan_image_url) {
+                $attachment_id = attachment_url_to_postid($plan_image_url);
+                if ($attachment_id) {
+                    update_field('plan_image', $attachment_id, $post_id);
+                }
+            }
         }
     }
     
@@ -90,6 +99,15 @@ class MembershipPlans {
             $checkout_link = $this->generate_checkout_link($level->id);
             update_field('checkout_link', $checkout_link, $post_id);
         }
+        
+        // Update plan image from PMPro field
+        $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
+        if ($plan_image_url) {
+            $attachment_id = attachment_url_to_postid($plan_image_url);
+            if ($attachment_id) {
+                update_field('plan_image', $attachment_id, $post_id);
+            }
+        }
     }
     
     private function generate_checkout_link($level_id) {
@@ -100,4 +118,5 @@ class MembershipPlans {
         $checkout_url = home_url('/checkout/');
         return add_query_arg('level', $level_id, $checkout_url);
     }
+    
 }

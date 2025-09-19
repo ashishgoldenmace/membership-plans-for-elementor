@@ -14,8 +14,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Define plugin path
 define( 'MPS_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 
-// Include class file
+// Include class files
 require_once MPS_PLUGIN_PATH . 'includes/class-membership-plans.php';
+require_once MPS_PLUGIN_PATH . 'includes/class-pmpro-fields.php';
 
 // Initialize plugin
 function mps_init_membership_plans() {
