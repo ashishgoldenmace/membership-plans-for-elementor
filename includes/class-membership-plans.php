@@ -1,23 +1,20 @@
 <?php
 /**
- * Membership Plans Handler - Minimal OOP Version
+ * Membership Plans Handler - Optimized
  */
 class MembershipPlans {
     
     public function __construct() {
-        add_action('init', array($this, 'register_cpt'));
-        
-        // Only sync when PMPro levels are created, updated, or deleted
-        add_action('pmpro_save_membership_level', array($this, 'sync_single_plan'));
-        add_action('pmpro_delete_membership_level', array($this, 'delete_plan'));
-        
-        // // Manual sync on admin init (optional)
-        // add_action('admin_init', array($this, 'sync_all_plans'));    
+        add_action('init', [$this, 'register_cpt']);
+        add_action('pmpro_save_membership_level', [$this, 'sync_single_plan']);
+        add_action('pmpro_delete_membership_level', [$this, 'delete_plan']);
+        // add_action('admin_init', [$this, 'sync_all_plans']); // optional manual sync
     }
-    
+
+    /** Register CPT for synced plans */
     public function register_cpt() {
-        register_post_type('membership_plan', array(
-            'labels' => array(
+        register_post_type('membership_plan', [
+            'labels' => [
                 'name' => 'Membership Plans',
                 'singular_name' => 'Membership Plan',
                 'add_new' => 'Add New Plan',
@@ -28,283 +25,208 @@ class MembershipPlans {
                 'search_items' => 'Search Membership Plans',
                 'not_found' => 'No plans found',
                 'not_found_in_trash' => 'No plans found in Trash',
-            ),
-            'public' => true,
-            'has_archive' => true,
+            ],
+            'public'       => true,
+            'has_archive'  => true,
             'show_in_rest' => true,
-            'show_in_menu' => false, // Hide from admin menu
-            'show_ui' => false, // Hide UI completely
-            'supports' => array('title', 'editor', 'custom-fields'),
-            'taxonomies' => array('category'),
-        ));
+            'show_ui'      => false, // Hide UI completely
+            'show_in_menu' => false,
+            'supports'     => ['title', 'editor', 'custom-fields'],
+            'taxonomies'   => ['category'],
+        ]);
     }
-    
-    
+
+    /** Sync only one plan */
     public function sync_single_plan($level_id) {
         if (!function_exists('pmpro_getLevel')) return;
-        
         $level = pmpro_getLevel($level_id);
         if (!$level) return;
-        
-        $existing_post = $this->get_plan_by_pmpro_id($level_id);
-        
-        if ($existing_post) {
-            $this->update_plan($existing_post->ID, $level);
-        } else {
-            $this->create_plan($level);
+    
+        $post = $this->get_plan_by_pmpro_id($level_id);
+    
+        // Get all ordered data to know max index
+        $ordered_data = $this->get_ordered_levels_data();
+        $order_index = count($ordered_data); // default → last
+    
+        // Check if level_id already has a position in pmpro_level_order
+        $level_order = array_filter(array_map('intval', explode(',', get_option('pmpro_level_order', ''))));
+        $pos = array_search($level_id, $level_order);
+        if ($pos !== false) {
+            $order_index = $pos; // respect order
         }
-        
-        // Reorder all plans after updating/creating a single plan
+    
+        $this->save_plan($level, $post ? $post->ID : 0, $order_index);
+    
+        // Reorder all plans finally
         $this->reorder_all_plans();
     }
     
+
+    /** Delete plan if PMPro level deleted */
     public function delete_plan($level_id) {
-        $existing_post = $this->get_plan_by_pmpro_id($level_id);
-        if ($existing_post) {
-            wp_delete_post($existing_post->ID, true);
-        }
-        
-        // Reorder all remaining plans after deletion
+        $post = $this->get_plan_by_pmpro_id($level_id);
+        if ($post) wp_delete_post($post->ID, true);
         $this->reorder_all_plans();
     }
-    
+
+    /** Full sync (manual or initial run) */
     public function sync_all_plans() {
-        $ordered_data = $this->get_ordered_levels_data();
-        
-        foreach ($ordered_data as $index => $data) {
-            if ($data['existing_post']) {
-                $this->update_plan($data['existing_post']->ID, $data['level'], $index);
-            } else {
-                $this->create_plan($data['level'], $index);
-            }
+        foreach ($this->get_ordered_levels_data() as $i => $data) {
+            $this->save_plan($data['level'], $data['existing_post'] ? $data['existing_post']->ID : 0, $i);
         }
     }
-    
-    private function get_plan_by_pmpro_id($pmpro_id) {
-        $posts = get_posts(array(
-            'post_type' => 'membership_plan',
-            'meta_key' => 'pmpro_level_id',
-            'meta_value' => $pmpro_id,
-            'post_status' => 'any',
-            'numberposts' => 1
-        ));
-        return !empty($posts) ? $posts[0] : null;
-    }
-    
-    /**
-     * Get ordered levels data with existing posts in one optimized method
-     */
-    private function get_ordered_levels_data() {
-        if (!function_exists('pmpro_getAllLevels')) return array();
-        
-        // Get the level order from PMPro settings
-        $level_order = get_option('pmpro_level_order', '');
-        $ordered_level_ids = array();
-        
-        if (!empty($level_order)) {
-            $ordered_level_ids = array_map('intval', explode(',', $level_order));
-        }
-        
-        // Get all levels and create lookup array
-        $all_levels = pmpro_getAllLevels(true, true);
-        $levels_by_id = array();
-        foreach ($all_levels as $level) {
-            $levels_by_id[$level->id] = $level;
-        }
-        
-        // Get all existing posts in one query
-        $existing_posts = get_posts(array(
-            'post_type' => 'membership_plan',
-            'meta_key' => 'pmpro_level_id',
-            'post_status' => 'any',
-            'numberposts' => -1
-        ));
-        
-        $posts_by_pmpro_id = array();
-        foreach ($existing_posts as $post) {
-            $pmpro_id = get_post_meta($post->ID, 'pmpro_level_id', true);
-            if ($pmpro_id) {
-                $posts_by_pmpro_id[$pmpro_id] = $post;
-            }
-        }
-        
-        $ordered_data = array();
-        
-        // Process levels in the specified order
-        foreach ($ordered_level_ids as $level_id) {
-            if (isset($levels_by_id[$level_id])) {
-                $ordered_data[] = array(
-                    'level' => $levels_by_id[$level_id],
-                    'existing_post' => isset($posts_by_pmpro_id[$level_id]) ? $posts_by_pmpro_id[$level_id] : null
-                );
-                unset($levels_by_id[$level_id]);
-            }
-        }
-        
-        // Process remaining levels
-        foreach ($levels_by_id as $level) {
-            $ordered_data[] = array(
-                'level' => $level,
-                'existing_post' => isset($posts_by_pmpro_id[$level->id]) ? $posts_by_pmpro_id[$level->id] : null
-            );
-        }
-        
-        return $ordered_data;
-    }
-    
-    /**
-     * Reorder all existing plans according to PMPro level order
-     */
-    private function reorder_all_plans() {
-        $ordered_data = $this->get_ordered_levels_data();
-        
-        foreach ($ordered_data as $index => $data) {
-            if ($data['existing_post']) {
-                $this->update_plan($data['existing_post']->ID, $data['level'], $index);
-            }
-        }
-    }
-    
-    private function create_plan($level, $order_index = 0) {
-        // Calculate post date based on order index to maintain proper ordering
+
+    /** Save or update a membership plan post */
+    private function save_plan($level, $post_id = 0, $order_index = 0) {
         $base_date = current_time('Y-m-d H:i:s');
-        $post_date = date('Y-m-d H:i:s', strtotime($base_date . ' +' . $order_index . ' seconds'));
-        
-        $post_id = wp_insert_post(array(
+        $post_date = date('Y-m-d H:i:s', strtotime($base_date . " +{$order_index} seconds"));
+
+        $post_args = [
+            'ID'           => $post_id,
             'post_title'   => $level->name,
             'post_content' => $level->description,
             'post_excerpt' => $level->description,
             'post_type'    => 'membership_plan',
             'post_status'  => 'publish',
             'post_date'    => $post_date,
-            'post_date_gmt' => get_gmt_from_date($post_date),
-        ));
-        
+            'post_date_gmt'=> get_gmt_from_date($post_date),
+        ];
+
+        $post_id = $post_id ? wp_update_post($post_args) : wp_insert_post($post_args);
+
         if ($post_id) {
             update_post_meta($post_id, 'pmpro_level_id', $level->id);
-            $price = pmpro_getLevelCost($level, true, true);
-            update_field('plan_price', $price, $post_id);
-            $checkout_link = $this->generate_checkout_link($level->id);
-            update_field('checkout_link', $checkout_link, $post_id);
-            
-            // Add plan image as featured image from PMPro field
-            $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
-            if ($plan_image_url) {
-                $attachment_id = attachment_url_to_postid($plan_image_url);
-                if ($attachment_id) {
-                    set_post_thumbnail($post_id, $attachment_id);
-                }
+
+            update_field('plan_price', pmpro_getLevelCost($level, true, true), $post_id);
+
+            if (!get_field('checkout_link', $post_id)) {
+                update_field('checkout_link', $this->generate_checkout_link($level->id), $post_id);
             }
-            
-            // Create categories and assign them to the plan post
-            $this->create_categories_for_level($level->id);
-        }
-    }
-    
-    private function update_plan($post_id, $level, $order_index = 0) {
-        // Calculate post date based on order index to maintain proper ordering
-        $base_date = current_time('Y-m-d H:i:s');
-        $post_date = date('Y-m-d H:i:s', strtotime($base_date . ' +' . $order_index . ' seconds'));
-        
-        wp_update_post(array(
-            'ID'           => $post_id,
-            'post_title'   => $level->name,
-            'post_content' => $level->description,
-            'post_excerpt' => $level->description,
-            'post_date'    => $post_date,
-            'post_date_gmt' => get_gmt_from_date($post_date),
-        ));
-        
-        $price = pmpro_getLevelCost($level, true, true);
-        update_field('plan_price', $price, $post_id);
-        
-        if (!get_field('checkout_link', $post_id)) {
-            $checkout_link = $this->generate_checkout_link($level->id);
-            update_field('checkout_link', $checkout_link, $post_id);
-        }
-        
-        // Update plan image as featured image from PMPro field
-        $plan_image_url = get_option('pmpro_plan_image_' . $level->id, '');
-        if ($plan_image_url) {
-            $attachment_id = attachment_url_to_postid($plan_image_url);
-            if ($attachment_id) {
+
+            // Featured image
+            $img_url = get_option("pmpro_plan_image_{$level->id}", '');
+            if ($img_url && ($attachment_id = attachment_url_to_postid($img_url))) {
                 set_post_thumbnail($post_id, $attachment_id);
             }
+
+            // Categories
+            $this->assign_categories($post_id, $level->id);
         }
-        
-        // Create/update categories and assign them to the plan post
-        $this->create_categories_for_level($level->id);
+    }
+
+    /** Reorder posts according to PMPro order */
+    private function reorder_all_plans() {
+        foreach ($this->get_ordered_levels_data() as $i => $data) {
+            if ($data['existing_post']) {
+                $this->save_plan($data['level'], $data['existing_post']->ID, $i);
+            }
+        }
+    }
+
+    /** Find plan post by PMPro level id */
+    private function get_plan_by_pmpro_id($pmpro_id) {
+        $posts = get_posts([
+            'post_type'   => 'membership_plan',
+            'meta_key'    => 'pmpro_level_id',
+            'meta_value'  => $pmpro_id,
+            'post_status' => 'any',
+            'numberposts' => 1
+        ]);
+        return $posts ? $posts[0] : null;
+    }
+
+    private function get_ordered_levels_data() {
+        if (!function_exists('pmpro_getAllLevels')) return [];
+    
+        // Ordered IDs from PMPro option
+        $ordered_ids = array_filter(array_map('intval', explode(',', get_option('pmpro_level_order', ''))));
+    
+        // All levels
+        $levels_by_id = [];
+        foreach (pmpro_getAllLevels(true, true) as $l) {
+            $levels_by_id[$l->id] = $l;
+        }
+    
+        // Existing posts (with date info)
+        $posts_by_id = [];
+        foreach (get_posts([
+            'post_type'   => 'membership_plan',
+            'meta_key'    => 'pmpro_level_id',
+            'post_status' => 'any',
+            'numberposts' => -1,
+            'orderby'     => 'date',
+            'order'       => 'ASC'
+        ]) as $p) {
+            $id = get_post_meta($p->ID, 'pmpro_level_id', true);
+            if ($id) $posts_by_id[$id] = $p;
+        }
+    
+        $data = [];
+    
+        // Ordered levels first
+        foreach ($ordered_ids as $id) {
+            if (isset($levels_by_id[$id])) {
+                $data[] = [
+                    'level' => $levels_by_id[$id],
+                    'existing_post' => $posts_by_id[$id] ?? null
+                ];
+                unset($levels_by_id[$id]);
+            }
+        }
+    
+        // Remaining levels → follow their post_date order
+        if (!empty($levels_by_id)) {
+            // Build array with date reference
+            $remaining = [];
+            foreach ($levels_by_id as $lvl) {
+                $date = isset($posts_by_id[$lvl->id]) ? $posts_by_id[$lvl->id]->post_date : current_time('mysql');
+                $remaining[] = [
+                    'level' => $lvl,
+                    'existing_post' => $posts_by_id[$lvl->id] ?? null,
+                    'date'  => $date
+                ];
+            }
+            // Sort by date ASC
+            usort($remaining, fn($a, $b) => strcmp($a['date'], $b['date']));
+            foreach ($remaining as $r) {
+                $data[] = ['level' => $r['level'], 'existing_post' => $r['existing_post']];
+            }
+        }
+    
+        return $data;
     }
     
+    
+    /** Build checkout link */
     private function generate_checkout_link($level_id) {
-        if (function_exists('pmpro_url')) {
-            return pmpro_url('checkout', '?level=' . $level_id);
-        }
-        
-        $checkout_url = home_url('/checkout/');
-        return add_query_arg('level', $level_id, $checkout_url);
+        return function_exists('pmpro_url') 
+            ? pmpro_url('checkout', '?level=' . $level_id) 
+            : add_query_arg('level', $level_id, home_url('/checkout/'));
     }
- 
-    private function get_groups_by_level_id($level_id) {
+
+    /** Get groups and assign them as categories */
+    private function assign_categories($post_id, $level_id) {
         global $wpdb;
-    
-        $table_groups = $wpdb->prefix . 'pmpro_groups';
-        $table_levels_groups = $wpdb->prefix . 'pmpro_membership_levels_groups';
+        $groups = $wpdb->get_results($wpdb->prepare("
+            SELECT g.name FROM {$wpdb->prefix}pmpro_membership_levels_groups lg
+            INNER JOIN {$wpdb->prefix}pmpro_groups g ON lg.group = g.id
+            WHERE lg.level = %d
+        ", $level_id));
 
-        $results = $wpdb->get_results(
-            $wpdb->prepare("
-                SELECT g.id as group_id, g.name as group_name
-                FROM $table_levels_groups lg
-                INNER JOIN $table_groups g ON lg.group = g.id
-                WHERE lg.level = %d
-            ", $level_id)
-        );
-    
-        return $results;
-    }
-    
-    private function create_categories_for_level($level_id) {
-        $groups = $this->get_groups_by_level_id($level_id);
-        
-        if (empty($groups)) {
-            $plan_post = $this->get_plan_by_pmpro_id($level_id);
-            if ($plan_post) {
-                wp_set_post_terms($plan_post->ID, array(), 'category');
-            }
-            return;
-        }
-
-        $plan_post = $this->get_plan_by_pmpro_id($level_id);
-        if (!$plan_post) return;
-    
-        $term_ids = array();
-    
-        foreach ($groups as $group) {
-            $category_name = sanitize_text_field($group->group_name);
-            $category_slug = sanitize_title($group->group_name);
-    
-            // Check if category already exists
-            $existing_category = get_term_by('slug', $category_slug, 'category');
-    
-            if (!$existing_category) {
-                $category_data = wp_insert_term(
-                    $category_name,
-                    'category',
-                    array(
-                        'slug' => $category_slug,
-                        'description' => 'Category for ' . $category_name . ' membership group'
-                    )
-                );
-    
-                if (!is_wp_error($category_data)) {
-                    $term_ids[] = $category_data['term_id'];
-                }
+        $term_ids = [];
+        foreach ($groups as $g) {
+            $slug = sanitize_title($g->name);
+            $term = get_term_by('slug', $slug, 'category');
+            if (!$term) {
+                $res = wp_insert_term($g->name, 'category', [
+                    'slug' => $slug,
+                    'description' => "Category for {$g->name} membership group"
+                ]);
+                if (!is_wp_error($res)) $term_ids[] = $res['term_id'];
             } else {
-                $term_ids[] = $existing_category->term_id;
+                $term_ids[] = $term->term_id;
             }
         }
-    
-        wp_set_post_terms($plan_post->ID, $term_ids, 'category');
-    }  
-    
+        wp_set_post_terms($post_id, $term_ids, 'category');
+    }
 }
