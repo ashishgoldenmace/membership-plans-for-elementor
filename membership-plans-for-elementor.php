@@ -1,10 +1,10 @@
 <?php
 /**
- * Plugin Name: Membership Plans Sync
- * Description: Sync Paid Memberships Pro plans with a custom Membership Plan post type.
+ * Plugin Name: Membership Plans For Elementor
+ * Description: Sync Paid Memberships Pro plans with Elementor.
  * Version: 1.0
- * Author: Your Name
- * Text Domain: membership-plans-sync
+ * Author: Michael
+ * Text Domain: membership-plans-for-elementor
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
