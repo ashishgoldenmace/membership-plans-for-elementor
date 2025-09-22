@@ -23,3 +23,10 @@ function mps_init_membership_plans() {
     new MembershipPlans();
 }
 add_action( 'plugins_loaded', 'mps_init_membership_plans' );
+
+// add_Action('init', function() {
+//     $levels = pmpro_getAllLevels(true, true);
+//     echo '<pre>';
+//     print_r($levels);
+//     die();
+// });

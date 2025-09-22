@@ -53,6 +53,9 @@ class MembershipPlans {
         } else {
             $this->create_plan($level);
         }
+        
+        // Reorder all plans after updating/creating a single plan
+        $this->reorder_all_plans();
     }
     
     public function delete_plan($level_id) {
@@ -60,20 +63,19 @@ class MembershipPlans {
         if ($existing_post) {
             wp_delete_post($existing_post->ID, true);
         }
+        
+        // Reorder all remaining plans after deletion
+        $this->reorder_all_plans();
     }
     
     public function sync_all_plans() {
-        if (!function_exists('pmpro_getAllLevels')) return;
+        $ordered_data = $this->get_ordered_levels_data();
         
-        $levels = pmpro_getAllLevels(true, true);
-        
-        foreach ($levels as $level) {
-            $existing_post = $this->get_plan_by_pmpro_id($level->id);
-            
-            if ($existing_post) {
-                $this->update_plan($existing_post->ID, $level);
+        foreach ($ordered_data as $index => $data) {
+            if ($data['existing_post']) {
+                $this->update_plan($data['existing_post']->ID, $data['level'], $index);
             } else {
-                $this->create_plan($level);
+                $this->create_plan($data['level'], $index);
             }
         }
     }
@@ -89,13 +91,93 @@ class MembershipPlans {
         return !empty($posts) ? $posts[0] : null;
     }
     
-    private function create_plan($level) {
+    /**
+     * Get ordered levels data with existing posts in one optimized method
+     */
+    private function get_ordered_levels_data() {
+        if (!function_exists('pmpro_getAllLevels')) return array();
+        
+        // Get the level order from PMPro settings
+        $level_order = get_option('pmpro_level_order', '');
+        $ordered_level_ids = array();
+        
+        if (!empty($level_order)) {
+            $ordered_level_ids = array_map('intval', explode(',', $level_order));
+        }
+        
+        // Get all levels and create lookup array
+        $all_levels = pmpro_getAllLevels(true, true);
+        $levels_by_id = array();
+        foreach ($all_levels as $level) {
+            $levels_by_id[$level->id] = $level;
+        }
+        
+        // Get all existing posts in one query
+        $existing_posts = get_posts(array(
+            'post_type' => 'membership_plan',
+            'meta_key' => 'pmpro_level_id',
+            'post_status' => 'any',
+            'numberposts' => -1
+        ));
+        
+        $posts_by_pmpro_id = array();
+        foreach ($existing_posts as $post) {
+            $pmpro_id = get_post_meta($post->ID, 'pmpro_level_id', true);
+            if ($pmpro_id) {
+                $posts_by_pmpro_id[$pmpro_id] = $post;
+            }
+        }
+        
+        $ordered_data = array();
+        
+        // Process levels in the specified order
+        foreach ($ordered_level_ids as $level_id) {
+            if (isset($levels_by_id[$level_id])) {
+                $ordered_data[] = array(
+                    'level' => $levels_by_id[$level_id],
+                    'existing_post' => isset($posts_by_pmpro_id[$level_id]) ? $posts_by_pmpro_id[$level_id] : null
+                );
+                unset($levels_by_id[$level_id]);
+            }
+        }
+        
+        // Process remaining levels
+        foreach ($levels_by_id as $level) {
+            $ordered_data[] = array(
+                'level' => $level,
+                'existing_post' => isset($posts_by_pmpro_id[$level->id]) ? $posts_by_pmpro_id[$level->id] : null
+            );
+        }
+        
+        return $ordered_data;
+    }
+    
+    /**
+     * Reorder all existing plans according to PMPro level order
+     */
+    private function reorder_all_plans() {
+        $ordered_data = $this->get_ordered_levels_data();
+        
+        foreach ($ordered_data as $index => $data) {
+            if ($data['existing_post']) {
+                $this->update_plan($data['existing_post']->ID, $data['level'], $index);
+            }
+        }
+    }
+    
+    private function create_plan($level, $order_index = 0) {
+        // Calculate post date based on order index to maintain proper ordering
+        $base_date = current_time('Y-m-d H:i:s');
+        $post_date = date('Y-m-d H:i:s', strtotime($base_date . ' +' . $order_index . ' seconds'));
+        
         $post_id = wp_insert_post(array(
             'post_title'   => $level->name,
             'post_content' => $level->description,
             'post_excerpt' => $level->description,
             'post_type'    => 'membership_plan',
             'post_status'  => 'publish',
+            'post_date'    => $post_date,
+            'post_date_gmt' => get_gmt_from_date($post_date),
         ));
         
         if ($post_id) {
@@ -119,12 +201,18 @@ class MembershipPlans {
         }
     }
     
-    private function update_plan($post_id, $level) {
+    private function update_plan($post_id, $level, $order_index = 0) {
+        // Calculate post date based on order index to maintain proper ordering
+        $base_date = current_time('Y-m-d H:i:s');
+        $post_date = date('Y-m-d H:i:s', strtotime($base_date . ' +' . $order_index . ' seconds'));
+        
         wp_update_post(array(
             'ID'           => $post_id,
             'post_title'   => $level->name,
             'post_content' => $level->description,
             'post_excerpt' => $level->description,
+            'post_date'    => $post_date,
+            'post_date_gmt' => get_gmt_from_date($post_date),
         ));
         
         $price = pmpro_getLevelCost($level, true, true);
@@ -160,11 +248,9 @@ class MembershipPlans {
     private function get_groups_by_level_id($level_id) {
         global $wpdb;
     
-        // दोनों tables
         $table_groups = $wpdb->prefix . 'pmpro_groups';
         $table_levels_groups = $wpdb->prefix . 'pmpro_membership_levels_groups';
-    
-        // Query बनाना
+
         $results = $wpdb->get_results(
             $wpdb->prepare("
                 SELECT g.id as group_id, g.name as group_name
@@ -177,13 +263,9 @@ class MembershipPlans {
         return $results;
     }
     
-    /**
-     * Create categories based on group names from PMPro level
-     */
     private function create_categories_for_level($level_id) {
         $groups = $this->get_groups_by_level_id($level_id);
         
-        // अगर कोई group नहीं है → post से categories हटाओ
         if (empty($groups)) {
             $plan_post = $this->get_plan_by_pmpro_id($level_id);
             if ($plan_post) {
@@ -191,8 +273,7 @@ class MembershipPlans {
             }
             return;
         }
-    
-        // Plan post निकालो
+
         $plan_post = $this->get_plan_by_pmpro_id($level_id);
         if (!$plan_post) return;
     
@@ -223,9 +304,7 @@ class MembershipPlans {
             }
         }
     
-        // ✅ अब सिर्फ current groups की categories assign होंगी
         wp_set_post_terms($plan_post->ID, $term_ids, 'category');
-    }
-    
+    }  
     
 }
